@@ -17,12 +17,54 @@ body { background: #1a1a2e; color: #e0e0e0; font-family: 'Courier New', monospac
 #cmd { flex: 1; background: #0a0a1a; color: #5BCEFA; border: 1px solid #5BCEFA44; padding: 4px 8px; font-family: 'Courier New', monospace; font-size: 14px; outline: none; }
 #cmd:focus { border-color: #F5A9B8; box-shadow: 0 0 6px #F5A9B844; }
 #status-bar { background: linear-gradient(90deg, #5BCEFA33, #F5A9B833, #FFFFFF22, #F5A9B833, #5BCEFA33); padding: 4px 16px; font-size: 11px; color: #F5A9B8; display: flex; justify-content: space-between; border-top: 1px solid #5BCEFA44; }
+
+/* ── Login Screen ── */
+#login-screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #1a1a2e; z-index: 100; }
+#login-screen.hidden { display: none; }
+#login-box { border: 2px solid #5BCEFA; background: #16213e; padding: 32px 40px; max-width: 420px; width: 90%; text-align: center; box-shadow: 0 0 30px #5BCEFA22, 0 0 60px #F5A9B811; }
+#login-box h1 { font-size: 20px; color: #F5A9B8; margin-bottom: 4px; text-shadow: 0 0 8px #F5A9B844; }
+#login-box .subtitle { font-size: 12px; color: #5BCEFA; margin-bottom: 24px; }
+#login-box .prompt { color: #dce6f0; font-size: 13px; margin-bottom: 16px; text-align: left; }
+#handle-row { display: flex; margin-bottom: 12px; }
+#handle-row label { color: #F5A9B8; line-height: 30px; margin-right: 8px; font-weight: bold; }
+#handle-input { flex: 1; background: #0a0a1a; color: #5BCEFA; border: 1px solid #5BCEFA44; padding: 4px 8px; font-family: 'Courier New', monospace; font-size: 14px; outline: none; }
+#handle-input:focus { border-color: #F5A9B8; box-shadow: 0 0 6px #F5A9B844; }
+#login-btn { width: 100%; padding: 8px; background: linear-gradient(90deg, #5BCEFA, #F5A9B8); color: #1a1a2e; border: none; font-family: 'Courier New', monospace; font-size: 14px; font-weight: bold; cursor: pointer; margin-bottom: 12px; }
+#login-btn:hover { opacity: 0.9; }
+#login-btn:disabled { opacity: 0.5; cursor: wait; }
+#login-error { color: #ff6b6b; font-size: 12px; min-height: 16px; margin-bottom: 8px; }
+#guest-link { color: #5BCEFA66; font-size: 11px; text-decoration: none; }
+#guest-link:hover { color: #5BCEFA; }
+
+/* ── Header identity ── */
+#header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#header h1 { font-size: 14px; color: #1a1a2e; text-shadow: 0 0 4px rgba(255,255,255,0.6); }
+#user-info { font-size: 11px; color: #1a1a2e; margin-left: auto; display: flex; align-items: center; gap: 6px; }
+#user-info img.avatar { width: 18px; height: 18px; border-radius: 50%; }
+#user-info .logout-btn { background: none; border: 1px solid #1a1a2e44; color: #1a1a2e; font-family: 'Courier New', monospace; font-size: 10px; cursor: pointer; padding: 1px 6px; margin-left: 4px; }
+#user-info .logout-btn:hover { background: #1a1a2e22; }
 </style>
 </head>
 <body>
+<div id="login-screen">
+  <div id="login-box">
+    <h1>Lost Kingdom</h1>
+    <div class="subtitle">═══ IDENTITY TERMINAL ═══</div>
+    <div class="prompt">Adventurer, identify yourself via the AT Protocol.</div>
+    <div id="handle-row">
+      <label>&gt;</label>
+      <input id="handle-input" type="text" placeholder="you.bsky.social" autocomplete="off">
+    </div>
+    <button id="login-btn">Login via Bluesky</button>
+    <div id="login-error"></div>
+    <a id="guest-link" href="#">enter as unknown traveler</a>
+  </div>
+</div>
+
 <div id="header">
   <h1>Lost Kingdom</h1>
   <span id="load-status">Loading…</span>
+  <span id="user-info"></span>
 </div>
 <div id="output-wrap"></div>
 <div id="input-row">
@@ -34,6 +76,7 @@ body { background: #1a1a2e; color: #e0e0e0; font-family: 'Courier New', monospac
   <span id="save-info"></span>
 </div>
 
+<script src="atproto-oauth.js"></script>
 <script>
 // ── Manual PNG Decoder (avoids canvas premultiplied alpha corruption) ──
 async function decodePNGRaw(base64) {
@@ -327,7 +370,61 @@ cmdInput.addEventListener('keydown', (e) => {
   }
 });
 
-async function main() {
+// ── Auth UI ──
+const loginScreen = document.getElementById('login-screen');
+const handleInput = document.getElementById('handle-input');
+const loginBtn = document.getElementById('login-btn');
+const loginError = document.getElementById('login-error');
+const guestLink = document.getElementById('guest-link');
+const userInfo = document.getElementById('user-info');
+
+function showIdentity(session) {
+  const handle = session.handle || session.did;
+  let html = '<span>@' + handle + '</span>';
+  if (session.displayName) html = '<strong>' + session.displayName + '</strong> ' + html;
+  if (session.avatar) html = '<img class="avatar" src="' + session.avatar + '" alt=""> ' + html;
+  html += ' <button class="logout-btn" onclick="ATPROTO_OAUTH.logout()">[x]</button>';
+  userInfo.innerHTML = html;
+}
+
+async function enrichSession(session) {
+  const profile = await ATPROTO_OAUTH.getProfile(session.did);
+  if (profile) {
+    if (profile.displayName) session.displayName = profile.displayName;
+    if (profile.avatar) session.avatar = profile.avatar;
+    if (profile.handle) session.handle = profile.handle;
+    localStorage.setItem('atproto_session', JSON.stringify(session));
+  }
+  return session;
+}
+
+loginBtn.addEventListener('click', async () => {
+  const handle = handleInput.value.trim();
+  if (!handle) { loginError.textContent = 'Enter your handle'; return; }
+  loginBtn.disabled = true;
+  loginError.textContent = '';
+  loginBtn.textContent = 'Resolving identity…';
+  try {
+    await ATPROTO_OAUTH.startLogin(handle);
+  } catch (e) {
+    loginError.textContent = e.message;
+    loginBtn.disabled = false;
+    loginBtn.textContent = 'Login via Bluesky';
+  }
+});
+
+handleInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') loginBtn.click();
+});
+
+guestLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  loginScreen.classList.add('hidden');
+  startGame();
+});
+
+// ── Game start ──
+async function startGame() {
   loadStatus.textContent = 'Loading PNG data…';
   await new Promise(r => setTimeout(r, 50));
 
@@ -371,6 +468,40 @@ async function main() {
 
   runner = new BFRunner(ops, saveLines);
   runner.run();
+}
+
+// ── Entry point ──
+async function main() {
+  // Check for OAuth callback (returning from Bluesky auth)
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('code') || params.has('error')) {
+    loginScreen.classList.add('hidden');
+    try {
+      loadStatus.textContent = 'Completing authentication…';
+      const session = await ATPROTO_OAUTH.handleCallback();
+      if (session) {
+        const enriched = await enrichSession(session);
+        showIdentity(enriched);
+      }
+    } catch (e) {
+      console.error('Auth callback error:', e);
+      loadStatus.textContent = 'Auth failed: ' + e.message;
+    }
+    startGame();
+    return;
+  }
+
+  // Check for existing session
+  const session = ATPROTO_OAUTH.getSession();
+  if (session) {
+    loginScreen.classList.add('hidden');
+    showIdentity(session);
+    enrichSession(session).then(s => showIdentity(s));
+    startGame();
+    return;
+  }
+
+  // No session — show login screen, wait for user action
 }
 
 main();
